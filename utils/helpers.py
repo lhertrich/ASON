@@ -17,7 +17,7 @@ def cut_out_image(image, mask):
     resized_mask = resize(mask, (image.shape[0], image.shape[1]), order=0, preserve_range=True)
     cut_image = image.copy()
     resized_mask = resized_mask.astype(bool)
-    cut_image[~resized_mask] = 255
+    cut_image[~resized_mask] = 0
     return cut_image
 
 
