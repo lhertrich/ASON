@@ -10,7 +10,7 @@ class UNet(nn.Module):
         nn (nn.Module): The parent class.
     """
     def __init__(self, in_channels=3, num_classes=3, base_filters=64):
-        super(UNet, self).__init__()
+        super().__init__()
         
         # Encoder
         self.enc1 = self._conv_block(in_channels, base_filters)
