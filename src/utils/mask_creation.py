@@ -3,12 +3,17 @@ import tifffile
 
 from skimage import color, filters, feature
 from skimage.util import img_as_ubyte
-from skimage.morphology import remove_small_objects, remove_small_holes, binary_closing, disk
+from skimage.morphology import (
+    remove_small_objects,
+    remove_small_holes,
+    binary_closing,
+    disk,
+)
 from joblib import load
 
 
 class MaskCreator:
-    """Class for creating and refining masks from H&E images using a pre-trained model.
+    """Class for creating and refining masks from H&E images using a pre-trained random forest model.
 
     This class provides methods for feature extraction, mask prediction, mask cleaning,
     and saving the resulting mask as a file.
@@ -43,7 +48,7 @@ class MaskCreator:
         img_lab = color.rgb2lab(image)
         gray = color.rgb2gray(image)
         gray_uint8 = img_as_ubyte(gray)
-        
+
         features = []
         # Raw color channels
         for i in range(3):
@@ -56,7 +61,7 @@ class MaskCreator:
         # Edges
         features.append(filters.sobel(gray))
         # Local Binary Pattern (texture)
-        lbp = feature.local_binary_pattern(gray_uint8, P=8, R=1, method='uniform')
+        lbp = feature.local_binary_pattern(gray_uint8, P=8, R=1, method="uniform")
         features.append(lbp)
         feat_stack = np.stack(features, axis=-1)
         return feat_stack
@@ -93,7 +98,9 @@ class MaskCreator:
         pred_mask = y_pred.reshape(H, W)
         return pred_mask
 
-    def create_mask(self, image: np.ndarray, save: bool = False, save_path: str = None) -> np.ndarray:
+    def create_mask(
+        self, image: np.ndarray, save: bool = False, save_path: str = None
+    ) -> np.ndarray:
         """Creates a mask for the input image, cleans it, and optionally saves it to a file.
 
         Args:
@@ -115,5 +122,5 @@ class MaskCreator:
                 tifffile.imwrite(save_path, pred_mask)
             else:
                 raise ValueError("Save path is required if save is True")
-        
+
         return pred_mask

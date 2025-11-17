@@ -1,5 +1,21 @@
 import sys
 from pathlib import Path
+
+from segmentation_models_pytorch.encoders import get_preprocessing_fn
+from tqdm import tqdm
+from omegaconf import DictConfig
+from dotenv import load_dotenv
+
+import torch
+import hydra
+import os
+import numpy as np
+import random
+
+from torch.utils.data import DataLoader
+import albumentations as A
+from albumentations.pytorch import ToTensorV2
+
 # Add project root to path
 script_path = Path(__file__).resolve()
 src_dir = script_path.parent
@@ -8,148 +24,301 @@ project_root = src_dir.parent
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
-import torch
-import torch.nn as nn
-import torch.optim as optim
-import argparse
-
-from torch.utils.data import DataLoader
-from torchmetrics.classification import MulticlassF1Score
-import albumentations as A
-from albumentations.pytorch import ToTensorV2
 from src.data.dataset import PixelClassificationDataset
-from src.models.cnn_model import UNet
+from src.models.tissue_segmentation import TissueSegmentationModel
 from src.utils.helpers import get_image_and_mask_paths
-from tqdm import tqdm
-
-CHECKPOINT_PATH = "checkpoints"
-DATA_DIR = "data/cnn_training/resized_images"
-MASK_DIR = "data/cnn_training/resized_masks"
-NUM_AUGMENTATIONS_PER_IMAGE = 10
-EPOCHS = 20
-
-train_transform = A.Compose([
-                    A.HorizontalFlip(p=0.5),
-                    A.VerticalFlip(p=0.5),
-                    A.Rotate(limit=90, p=0.75, interpolation=3), 
-                    A.ShiftScaleRotate(shift_limit=0.0625, scale_limit=0.1, rotate_limit=15, p=0.5, border_mode=0),
-
-                    # Color Augmentations
-                    A.ColorJitter(brightness=0.1, contrast=0.1, saturation=0.1, hue=0.05, p=0.5),
-                    A.GaussNoise(p=0.2),
-
-                    A.Normalize(mean=[0.0, 0.0, 0.0], std=[1.0, 1.0, 1.0]),
-                    ToTensorV2()
-                ])
 
 
-def train(model, train_loader, val_loader, criterion, optimizer, device, epochs, num_classes=3):
-    f1_metric = MulticlassF1Score(num_classes=num_classes, average='macro').to(device)
-    
+
+def seed_everything(seed: int = 42):
+    """
+    Seed all random number generators for reproducibility.
+
+    Args:
+        seed (int): Random seed value
+    """
+    random.seed(seed)
+    os.environ["PYTHONHASHSEED"] = str(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)  # For multi-GPU
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
+    # For MPS (Apple Silicon)
+    if torch.backends.mps.is_available():
+        torch.mps.manual_seed(seed)
+
+    print(f"All random seeds set to: {seed}")
+
+
+def get_train_transform():
+    """Returns the training augmentation pipeline
+
+    Returns:
+        train_transform (albumentation): The albumentations augmentation pipeline
+    """
+    return A.Compose(
+        [
+            A.HorizontalFlip(p=0.5),
+            A.VerticalFlip(p=0.5),
+            A.Rotate(limit=90, p=0.75, interpolation=3),
+            A.ShiftScaleRotate(
+                shift_limit=0.0625,
+                scale_limit=0.1,
+                rotate_limit=15,
+                p=0.5,
+                border_mode=0,
+            ),
+            # Color Augmentations
+            A.ColorJitter(
+                brightness=0.1, contrast=0.1, saturation=0.1, hue=0.05, p=0.5
+            ),
+            A.GaussNoise(p=0.2),
+            A.Normalize(mean=[0.0, 0.0, 0.0], std=[1.0, 1.0, 1.0]),
+            ToTensorV2(),
+        ]
+    )
+
+
+def train(
+    tissue_model: TissueSegmentationModel,
+    train_loader: DataLoader,
+    test_loader: DataLoader,
+    epochs: int,
+    model_name: str,
+    checkpoint_path: str = "checkpoints",
+    gradient_clipping: bool = True,
+    max_norm: float = 1.0,
+):
+    """Trains the tissue segmentation model.
+
+    Args:
+        tissue_model (TissueSegmentationModel): The tissue segmentation model.
+        train_loader (DataLoader): The training data loader.
+        test_loader (DataLoader): The test data loader.
+        epochs (int): The number of epochs to train for.
+        model_name (str): The name of the model.
+        checkpoint_path (str, optional): The path to save the checkpoints. Defaults to "checkpoints".
+        gradient_clipping (bool): Whether to apply gradient clipping. Defaults to False.
+        max_norm (float): Maximum norm for gradient clipping. Defaults to 1.0.
+
+    Returns:
+        Tuple[float, int]: The best test F1 score and the best epoch.
+    """
+
+    optimizer = tissue_model.configure_optimizers()
+
+    # Create checkpoint directory if it doesn't exist
+    Path(checkpoint_path).mkdir(parents=True, exist_ok=True)
+
+    # Temporary checkpoint file
+    temp_checkpoint = Path(checkpoint_path) / f"temp_{model_name}.pth"
+    best_model_path = Path(checkpoint_path) / f"{model_name}.pth"
+
     epoch_pbar = tqdm(range(epochs), desc="Training", position=0)
-    best_val_f1 = 0.0
+    best_test_f1 = 0.0
     best_epoch = 0
 
     for epoch in epoch_pbar:
-        model.train()
-        train_loss = 0.0
-        f1_metric.reset()
+        ### Training
+        tissue_model.model.train()
+        train_losses = []
 
-        train_pbar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{epochs} [Train]", 
-                         position=1, leave=False)
+        train_pbar = tqdm(
+            train_loader,
+            desc=f"Epoch {epoch + 1}/{epochs} [Train]",
+            position=1,
+            leave=False,
+        )
         for images, masks in train_pbar:
-            images = images.to(device)
-            masks = masks.to(device)
+            images = images.to(tissue_model.device)
+            masks = masks.to(tissue_model.device)
+
             optimizer.zero_grad()
-            outputs = model(images)
-            loss = criterion(outputs, masks)
+            loss, loss_val = tissue_model.training_step((images, masks))
             loss.backward()
 
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            if gradient_clipping:
+                if max_norm is not None:
+                    torch.nn.utils.clip_grad_norm_(
+                        tissue_model.model.parameters(), max_norm=max_norm
+                    )
+                else:
+                    torch.nn.utils.clip_grad_norm_(
+                        tissue_model.model.parameters(), max_norm=1.0
+                    )
 
             optimizer.step()
-            train_loss += loss.item()
+            train_losses.append(loss_val)
 
-            preds = torch.argmax(outputs, dim=1)
-            f1_metric.update(preds, masks)
+            train_pbar.set_postfix({"loss": f"{loss_val:.4f}"})
 
-        avg_train_loss = train_loss / len(train_loader)
-        train_f1 = f1_metric.compute().item()
+        avg_train_loss = sum(train_losses) / len(train_losses)
+        train_metrics = tissue_model.training_epoch_end(avg_train_loss)
 
-        model.eval()
-        val_loss = 0.0
-        f1_metric.reset()
+        ### Testing
+        tissue_model.model.eval()
+        test_losses = []
 
-        val_pbar = tqdm(val_loader, desc=f"Epoch {epoch+1}/{epochs} [Val]", 
-                         position=1, leave=False)
+        test_pbar = tqdm(
+            test_loader,
+            desc=f"Epoch {epoch + 1}/{epochs} [Test]",
+            position=1,
+            leave=False,
+        )
         with torch.no_grad():
-            for images, masks in val_pbar:
-                images = images.to(device)
-                masks = masks.to(device)
-                outputs = model(images)
-                loss = criterion(outputs, masks)
-                val_loss += loss.item()
+            for images, masks in test_pbar:
+                images = images.to(tissue_model.device)
+                masks = masks.to(tissue_model.device)
 
-                preds = torch.argmax(outputs, dim=1)
-                f1_metric.update(preds, masks)
-        
-        avg_val_loss = val_loss / len(val_loader)
-        val_f1 = f1_metric.compute().item()
+                loss_val = tissue_model.test_step((images, masks))
+                test_losses.append(loss_val)
 
-        print(f"Epoch {epoch+1}/{epochs}")
-        print(f"Train Loss: {avg_train_loss:.4f}, F1: {train_f1:.4f}")
-        print(f"Val Loss: {avg_val_loss:.4f}, F1: {val_f1:.4f}")
+                test_pbar.set_postfix({"loss": f"{loss_val:.4f}"})
 
-        if val_f1 > best_val_f1:
-            best_val_f1 = val_f1
-            best_epoch = epoch+1
-            torch.save(model.state_dict(), CHECKPOINT_PATH + f"/best_model.pth")
+        avg_test_loss = sum(test_losses) / len(test_losses)
+        test_metrics = tissue_model.test_epoch_end(avg_test_loss)
 
-        if (epoch + 1) % 10 == 0:
-            torch.save({
-                'epoch': epoch + 1,
-                'model_state_dict': model.state_dict(),
-                'optimizer_state_dict': optimizer.state_dict(),
-                'train_loss': avg_train_loss,
-                'val_loss': avg_val_loss,
-            }, CHECKPOINT_PATH + f"/checkpoint_epoch_{epoch+1}.pth")
-            print(f"Saved checkpoint at epoch {epoch+1}")
-    
-    print(f"\nTraining completed!")
-    print(f"Best model at epoch {best_epoch} with Val F1: {best_val_f1:.4f}")
+        ### Logging
+        print(f"\nEpoch {epoch + 1}/{epochs}")
+        print(
+            f"  Train - Loss: {train_metrics['train_loss']:.4f}, "
+            f"Acc: {train_metrics['train_accuracy']:.4f}, "
+            f"F1: {train_metrics['train_f1']:.4f}"
+        )
+        print(
+            f"  Test  - Loss: {test_metrics['test_loss']:.4f}, "
+            f"Acc: {test_metrics['test_accuracy']:.4f}, "
+            f"F1: {test_metrics['test_f1']:.4f}"
+        )
 
-    best_model_state = torch.load(CHECKPOINT_PATH + "/best_model.pth", weights_only=True)
-    torch.save(best_model_state, CHECKPOINT_PATH + "/final_model.pth")
-    print("Saved final model successfully!")
-    return best_val_f1, best_epoch
+        ### Model checkpointing
+        current_test_f1 = test_metrics["test_f1"]
 
+        # Save as temp checkpoint
+        torch.save(
+            {
+                "epoch": epoch + 1,
+                "model_state_dict": tissue_model.model.state_dict(),
+                "optimizer_state_dict": optimizer.state_dict(),
+                "train_loss": avg_train_loss,
+                "test_loss": avg_test_loss,
+                "test_f1": current_test_f1,
+            },
+            temp_checkpoint,
+        )
 
-def main():
-    device = torch.device("mps" if torch.mps.is_available() else "cpu")
-    print(f"Using device: {device}")
-    model = UNet().to(device)
-    print("Loaded model successfully!")
+        # Check for best model and save if so
+        if current_test_f1 > best_test_f1:
+            best_test_f1 = current_test_f1
+            best_epoch = epoch + 1
 
-    optimizer = optim.AdamW(model.parameters(), lr=0.0001, weight_decay=0.01)
-    criterion = torch.nn.CrossEntropyLoss()
+            # Copy temp checkpoint to best model
+            torch.save(tissue_model.model.state_dict(), best_model_path)
+            print(f"New best model saved! (F1: {best_test_f1:.4f})")
 
-    train_image_paths, train_mask_paths, test_image_paths, test_mask_paths = get_image_and_mask_paths(DATA_DIR, MASK_DIR)
-    train_dataset = PixelClassificationDataset(train_image_paths, train_mask_paths, transform=train_transform, augmentations_per_image=NUM_AUGMENTATIONS_PER_IMAGE)
-    test_dataset = PixelClassificationDataset(test_image_paths, test_mask_paths, transform=None)
-    print(f"Training samples: {len(train_dataset)}")
-    print(f"Validation samples: {len(test_dataset)}")
-    
-    train_loader = DataLoader(train_dataset, batch_size=8, shuffle=True)
-    val_loader = DataLoader(test_dataset, batch_size=8, shuffle=False)
+        epoch_pbar.set_postfix(
+            {"best_f1": f"{best_test_f1:.4f}", "best_epoch": best_epoch}
+        )
 
-    print("Start training...")
-    best_val_loss, best_epoch = train(model, train_loader, val_loader, criterion, optimizer, device, epochs=EPOCHS)
-    print("\n" + "="*60)
-    print(f"Finished Training! Training Summary:")
+    print(f"\n{'=' * 60}")
+    print("Training completed!")
     print(f"  Best Epoch: {best_epoch}")
-    print(f"  Best Val Loss: {best_val_loss:.4f}")
-    print(f"  Model saved to: {CHECKPOINT_PATH}/final_model.pth")
-    print("="*60)
+    print(f"  Best Test F1: {best_test_f1:.4f}")
+    print(f"  Best model saved to: {best_model_path}")
+
+    # Delete temporary checkpoint
+    if temp_checkpoint.exists():
+        temp_checkpoint.unlink()
+        print("Cleaned up temporary checkpoints")
+
+    print(f"{'=' * 60}\n")
+
+    # Finish wandb run
+    tissue_model.finish()
+
+    return best_test_f1, best_epoch
+
+
+@hydra.main(version_base=None, config_path="../configs", config_name="config.yaml")
+def main(cfg: DictConfig):
+    """Main training function with Hydra configuration.
+
+    Args:
+        cfg: Hydra configuration object loaded from configs/config.yaml
+    """
+    load_dotenv()
+
+    seed = cfg.get("seed", 42)
+    seed_everything(seed)
+
+    # Extract configuration values
+    model_name = cfg.model.name
+    epochs = cfg.training.epochs
+    batch_size = cfg.training.batch_size
+    data_dir = cfg.data.data_dir
+    mask_dir = cfg.data.mask_dir
+    num_augmentations = cfg.data.num_augmentations
+    checkpoint_path = cfg.checkpoint_path
+    gradient_clipping = cfg.model.training.get("gradient_clipping", True)
+    max_norm = cfg.model.training.get("max_norm", 1.0)
+
+    # Initialize model
+    base_model = hydra.utils.instantiate(cfg.model.params)
+
+    encoder = cfg.model.params.get("encoder", None)
+    weights = cfg.model.params.get("encoder_weights", None)
+
+    preprocessor = None
+    if encoder and weights:
+        preprocessor = get_preprocessing_fn(encoder, pretrained=weights)
+
+    # Wrap in TissueSegmentationModel
+    tissue_model = TissueSegmentationModel(
+        model=base_model, cfg=cfg, preprocessor=preprocessor
+    )
+
+    print(f"\nUsing device: {tissue_model.device}")
+    print(f"Model name: {model_name}")
+
+    # Load data
+    train_image_paths, train_mask_paths, test_image_paths, test_mask_paths = (
+        get_image_and_mask_paths(data_dir, mask_dir)
+    )
+
+    binary = cfg.model.params.classes == 2
+
+    train_dataset = PixelClassificationDataset(
+        train_image_paths,
+        train_mask_paths,
+        transform=get_train_transform(),
+        augmentations_per_image=num_augmentations,
+        binary_mode=binary,
+    )
+    test_dataset = PixelClassificationDataset(
+        test_image_paths, test_mask_paths, transform=None, binary_mode=binary
+    )
+
+    print(f"Training samples: {len(train_dataset)}")
+    print(f"Test samples: {len(test_dataset)}\n")
+
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
+
+    print("Starting training...")
+    best_f1, best_epoch = train(
+        tissue_model=tissue_model,
+        train_loader=train_loader,
+        test_loader=test_loader,
+        epochs=epochs,
+        model_name=model_name,
+        checkpoint_path=checkpoint_path,
+        gradient_clipping=gradient_clipping,
+        max_norm=max_norm,
+    )
+
 
 if __name__ == "__main__":
     main()
