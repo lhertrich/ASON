@@ -2,8 +2,7 @@ import sys
 from pathlib import Path
 # Add project root to path
 script_path = Path(__file__).resolve()
-scripts_dir = script_path.parent
-src_dir = scripts_dir.parent
+src_dir = script_path.parent
 project_root = src_dir.parent
 
 if str(project_root) not in sys.path:
@@ -12,8 +11,10 @@ if str(project_root) not in sys.path:
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import argparse
 
 from torch.utils.data import DataLoader
+from torchmetrics.classification import MulticlassF1Score
 import albumentations as A
 from albumentations.pytorch import ToTensorV2
 from src.data.dataset import PixelClassificationDataset
@@ -25,7 +26,7 @@ CHECKPOINT_PATH = "checkpoints"
 DATA_DIR = "data/cnn_training/resized_images"
 MASK_DIR = "data/cnn_training/resized_masks"
 NUM_AUGMENTATIONS_PER_IMAGE = 10
-EPOCHS = 100
+EPOCHS = 20
 
 train_transform = A.Compose([
                     A.HorizontalFlip(p=0.5),
@@ -42,13 +43,18 @@ train_transform = A.Compose([
                 ])
 
 
-def train(model, train_loader, val_loader, criterion, optimizer, device, epochs):
+def train(model, train_loader, val_loader, criterion, optimizer, device, epochs, num_classes=3):
+    f1_metric = MulticlassF1Score(num_classes=num_classes, average='macro').to(device)
+    
     epoch_pbar = tqdm(range(epochs), desc="Training", position=0)
-    best_val_loss = float('inf')
+    best_val_f1 = 0.0
     best_epoch = 0
+
     for epoch in epoch_pbar:
         model.train()
         train_loss = 0.0
+        f1_metric.reset()
+
         train_pbar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{epochs} [Train]", 
                          position=1, leave=False)
         for images, masks in train_pbar:
@@ -64,10 +70,16 @@ def train(model, train_loader, val_loader, criterion, optimizer, device, epochs)
             optimizer.step()
             train_loss += loss.item()
 
+            preds = torch.argmax(outputs, dim=1)
+            f1_metric.update(preds, masks)
+
         avg_train_loss = train_loss / len(train_loader)
+        train_f1 = f1_metric.compute().item()
 
         model.eval()
         val_loss = 0.0
+        f1_metric.reset()
+
         val_pbar = tqdm(val_loader, desc=f"Epoch {epoch+1}/{epochs} [Val]", 
                          position=1, leave=False)
         with torch.no_grad():
@@ -77,11 +89,19 @@ def train(model, train_loader, val_loader, criterion, optimizer, device, epochs)
                 outputs = model(images)
                 loss = criterion(outputs, masks)
                 val_loss += loss.item()
+
+                preds = torch.argmax(outputs, dim=1)
+                f1_metric.update(preds, masks)
         
         avg_val_loss = val_loss / len(val_loader)
-        print(f"Epoch {epoch+1}/{epochs}, Train Loss: {avg_train_loss:.4f}, Val Loss: {avg_val_loss:.4f}")
-        if avg_val_loss < best_val_loss:
-            best_val_loss = avg_val_loss
+        val_f1 = f1_metric.compute().item()
+
+        print(f"Epoch {epoch+1}/{epochs}")
+        print(f"Train Loss: {avg_train_loss:.4f}, F1: {train_f1:.4f}")
+        print(f"Val Loss: {avg_val_loss:.4f}, F1: {val_f1:.4f}")
+
+        if val_f1 > best_val_f1:
+            best_val_f1 = val_f1
             best_epoch = epoch+1
             torch.save(model.state_dict(), CHECKPOINT_PATH + f"/best_model.pth")
 
@@ -96,13 +116,12 @@ def train(model, train_loader, val_loader, criterion, optimizer, device, epochs)
             print(f"Saved checkpoint at epoch {epoch+1}")
     
     print(f"\nTraining completed!")
-    print(f"Best model at epoch {best_epoch} with Val Loss: {best_val_loss:.4f}")
+    print(f"Best model at epoch {best_epoch} with Val F1: {best_val_f1:.4f}")
 
     best_model_state = torch.load(CHECKPOINT_PATH + "/best_model.pth", weights_only=True)
     torch.save(best_model_state, CHECKPOINT_PATH + "/final_model.pth")
     print("Saved final model successfully!")
-    return best_val_loss, best_epoch
-
+    return best_val_f1, best_epoch
 
 
 def main():
@@ -112,6 +131,7 @@ def main():
     print("Loaded model successfully!")
 
     optimizer = optim.AdamW(model.parameters(), lr=0.0001, weight_decay=0.01)
+    criterion = torch.nn.CrossEntropyLoss()
 
     train_image_paths, train_mask_paths, test_image_paths, test_mask_paths = get_image_and_mask_paths(DATA_DIR, MASK_DIR)
     train_dataset = PixelClassificationDataset(train_image_paths, train_mask_paths, transform=train_transform, augmentations_per_image=NUM_AUGMENTATIONS_PER_IMAGE)
@@ -121,21 +141,6 @@ def main():
     
     train_loader = DataLoader(train_dataset, batch_size=8, shuffle=True)
     val_loader = DataLoader(test_dataset, batch_size=8, shuffle=False)
-
-    # Calculate class weights for imbalanced data
-    print("\nCalculating class weights...")
-    class_counts = torch.zeros(3)
-    for _, masks in tqdm(train_loader, desc="Analyzing classes"):
-        for c in range(3):
-            class_counts[c] += (masks == c).sum()
-    
-    total_pixels = class_counts.sum()
-    class_weights = total_pixels / (3 * class_counts)
-    class_weights = class_weights.to(device)
-    print(f"Class weights: {class_weights}")
-    
-    # Use weighted CrossEntropyLoss
-    criterion = nn.CrossEntropyLoss(weight=class_weights)
 
     print("Start training...")
     best_val_loss, best_epoch = train(model, train_loader, val_loader, criterion, optimizer, device, epochs=EPOCHS)
