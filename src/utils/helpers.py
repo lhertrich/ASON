@@ -1,6 +1,8 @@
 import matplotlib.pyplot as plt
 import os
 import numpy as np
+import torch
+import random
 from skimage.morphology import (
     remove_small_objects,
     remove_small_holes,
@@ -99,3 +101,25 @@ def get_image_and_mask_paths(data_dir, mask_dir):
         ]
     )
     return image_paths_train, mask_paths_train, image_paths_test, mask_paths_test
+
+
+def seed_everything(seed: int = 42):
+    """
+    Seed all random number generators for reproducibility.
+
+    Args:
+        seed (int): Random seed value
+    """
+    random.seed(seed)
+    os.environ["PYTHONHASHSEED"] = str(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
+    if torch.backends.mps.is_available():
+        torch.mps.manual_seed(seed)
+
+    print(f"All random seeds set to: {seed}")

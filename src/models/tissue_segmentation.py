@@ -10,13 +10,14 @@ from typing import Dict, Optional
 from src.types import Batch
 
 
-class TissueSegmentationModel:
+class TissueSegmentationModel(nn.Module):
     def __init__(
         self,
         model: nn.Module,
         cfg: DictConfig,
         preprocessor: Optional[functools.partial] = None,
     ):
+        super().__init__()
         self.device = torch.device("mps" if torch.mps.is_available() else "cpu")
         self.model = model.to(self.device)
         self.preprocessor = preprocessor

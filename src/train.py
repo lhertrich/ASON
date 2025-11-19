@@ -26,31 +26,7 @@ if str(project_root) not in sys.path:
 
 from src.data.dataset import PixelClassificationDataset
 from src.models.tissue_segmentation import TissueSegmentationModel
-from src.utils.helpers import get_image_and_mask_paths
-
-
-
-def seed_everything(seed: int = 42):
-    """
-    Seed all random number generators for reproducibility.
-
-    Args:
-        seed (int): Random seed value
-    """
-    random.seed(seed)
-    os.environ["PYTHONHASHSEED"] = str(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)  # For multi-GPU
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
-
-    # For MPS (Apple Silicon)
-    if torch.backends.mps.is_available():
-        torch.mps.manual_seed(seed)
-
-    print(f"All random seeds set to: {seed}")
+from src.utils.helpers import get_image_and_mask_paths, seed_everything
 
 
 def get_train_transform():
@@ -113,7 +89,6 @@ def train(
     # Create checkpoint directory if it doesn't exist
     Path(checkpoint_path).mkdir(parents=True, exist_ok=True)
 
-    # Temporary checkpoint file
     temp_checkpoint = Path(checkpoint_path) / f"temp_{model_name}.pth"
     best_model_path = Path(checkpoint_path) / f"{model_name}.pth"
 
@@ -236,7 +211,6 @@ def train(
 
     print(f"{'=' * 60}\n")
 
-    # Finish wandb run
     tissue_model.finish()
 
     return best_test_f1, best_epoch
@@ -275,7 +249,6 @@ def main(cfg: DictConfig):
     if encoder and weights:
         preprocessor = get_preprocessing_fn(encoder, pretrained=weights)
 
-    # Wrap in TissueSegmentationModel
     tissue_model = TissueSegmentationModel(
         model=base_model, cfg=cfg, preprocessor=preprocessor
     )
@@ -283,7 +256,6 @@ def main(cfg: DictConfig):
     print(f"\nUsing device: {tissue_model.device}")
     print(f"Model name: {model_name}")
 
-    # Load data
     train_image_paths, train_mask_paths, test_image_paths, test_mask_paths = (
         get_image_and_mask_paths(data_dir, mask_dir)
     )
