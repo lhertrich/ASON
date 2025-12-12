@@ -7,7 +7,7 @@ from omegaconf import DictConfig, OmegaConf
 from typing import Dict, Tuple, List
 
 script_path = Path(__file__).resolve()
-src_dir = script_path.parent
+src_dir = script_path.parent.parent
 project_root = src_dir.parent
 
 if str(project_root) not in sys.path:
@@ -18,7 +18,7 @@ from src.models.random_forest import RandomForestWrapper
 class ModelLoader:
     """Helper class to load and manage multiple models."""
     
-    def __init__(self, project_root: Path):
+    def __init__(self, project_root: Path = project_root):
         self.project_root = project_root
         self.device = torch.device("mps" if torch.mps.is_available() else "cpu")
         self.models = {}

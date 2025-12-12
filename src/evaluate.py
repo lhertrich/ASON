@@ -19,7 +19,6 @@ from datetime import datetime
 from tqdm import tqdm
 from segmentation_models_pytorch.encoders import get_preprocessing_fn
 
-# Add project root to path
 script_path = Path(__file__).resolve()
 src_dir = script_path.parent
 project_root = src_dir.parent
@@ -43,7 +42,6 @@ def load_model(checkpoint_path: Path, cfg: DictConfig, device: torch.device):
     Returns:
         Loaded model
     """
-    # Initialize model using Hydra instantiation (same as training)
     model = hydra.utils.instantiate(cfg.model.params)
     model = model.to(device)
     

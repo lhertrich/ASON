@@ -3,6 +3,7 @@ import os
 import numpy as np
 import torch
 import random
+import sys
 from skimage.morphology import (
     remove_small_objects,
     remove_small_holes,
@@ -10,6 +11,14 @@ from skimage.morphology import (
     disk,
 )
 from skimage.transform import resize
+from pathlib import Path
+
+script_path = Path(__file__).resolve()
+src_path = script_path.parent.parent
+project_root = src_path.parent
+
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
 
 
 def clean_mask(mask, num_classes=2, min_size=200, area_threshold=10, radius=2):
