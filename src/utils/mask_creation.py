@@ -1,5 +1,14 @@
 import numpy as np
 import tifffile
+import sys
+from pathlib import Path
+
+script_path = Path(__file__).resolve()
+src_path = script_path.parent.parent
+project_root = src_path.parent
+
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
 
 from skimage import color, filters, feature
 from skimage.util import img_as_ubyte
@@ -32,7 +41,7 @@ class MaskCreator:
             ValueError: If the model cannot be loaded from the given path.
         """
         try:
-            self.model = load(model_path)
+            self.model = load(str(project_root) + "/models/decision_tree_model.joblib")
         except Exception as e:
             raise ValueError(f"Failed to load mask from {model_path}: {e}")
 
