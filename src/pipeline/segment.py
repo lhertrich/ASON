@@ -25,6 +25,16 @@ class SegmentationModule:
     def segment_tissue(
         self, image: np.ndarray, org_res: tuple[int, int] = (1920, 2560)
     ) -> np.ndarray:
+        """Segment tissue regions in a histopathology image.
+
+        Args:
+            image: Input image as a numpy array.
+            org_res: Original resolution (height, width) to resize the output mask to.
+                Defaults to (1920, 2560).
+
+        Returns:
+            Predicted segmentation mask as a numpy array with the same dimensions as org_res.
+        """
         img = inference_processing(image, self.device)
 
         with torch.no_grad():
@@ -43,6 +53,21 @@ class SegmentationModule:
         cleaned: bool = True,
         area_th: float = 0.5,
     ) -> np.ndarray:
+        """Segment nuclei in a histopathology image using StarDist2D.
+
+        Args:
+            image: Input image as a numpy array.
+            prob_thresh: Probability threshold for nuclei detection. Defaults to 0.25.
+            nms_thresh: Non-maximum suppression threshold. Defaults to 0.01.
+            cleaned: If True, filters nuclei based on tissue segmentation and area.
+                Defaults to True.
+            area_th: Area threshold as a fraction of median area for filtering nuclei.
+                Only used if cleaned is True. Defaults to 0.5.
+
+        Returns:
+            Dictionary containing nuclei detection results with keys 'points', 'coord',
+            and 'prob'.
+        """
         image_normed = rescale_intensity(image, out_range=(0, 1))
         _, data_dict = self.nuclei_model.predict_instances(
             image_normed,
@@ -60,6 +85,19 @@ class SegmentationModule:
     def _filter_data_dict(
         self, mask: np.ndarray, data_dict: dict[str, any], area_th: float = 0.5
     ) -> list:
+        """Filter nuclei detections based on tissue mask and area threshold.
+
+        Args:
+            mask: Binary tissue segmentation mask.
+            data_dict: Dictionary containing nuclei detection results with keys
+                'points', 'coord', and 'prob'.
+            area_th: Area threshold as a fraction of median area. Nuclei with area
+                below this threshold are filtered out. Defaults to 0.5.
+
+        Returns:
+            Filtered dictionary containing only nuclei that are within tissue regions
+            and meet the area threshold criteria.
+        """
         points = data_dict["points"]
         median_area = self._calculate_median_area(data_dict["coord"])
         filtered_points = []
@@ -83,9 +121,27 @@ class SegmentationModule:
         return filtered_data_dict
 
     def _poly_area(self, x: int, y: int):
+        """Calculate the area of a polygon using the shoelace formula.
+
+        Args:
+            x: Array of x-coordinates of the polygon vertices.
+            y: Array of y-coordinates of the polygon vertices.
+
+        Returns:
+            Area of the polygon as a float.
+        """
         return 0.5 * np.abs(np.dot(x, np.roll(y, 1)) - np.dot(y, np.roll(x, 1)))
 
     def _calculate_median_area(self, coordinates: np.ndarray) -> float:
+        """Calculate the median area of multiple polygons.
+
+        Args:
+            coordinates: Array of polygon coordinates where each polygon is represented
+                as a tuple of (x_coords, y_coords).
+
+        Returns:
+            Median area across all polygons as a float.
+        """
         areas = []
         for coord in coordinates:
             area = self._poly_area(np.array(coord[0]), np.array(coord[1]))
@@ -95,6 +151,12 @@ class SegmentationModule:
         return median_area
 
     def _get_device(self) -> str:
+        """Determine the best available device for PyTorch computations.
+
+        Returns:
+            Device string: "cuda" if CUDA is available, "mps" if Apple Silicon GPU
+            is available, otherwise "cpu".
+        """
         device = "cpu"
         if torch.mps.is_available():
             device = "mps"
