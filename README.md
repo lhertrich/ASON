@@ -165,7 +165,7 @@ conda activate research_project
 python src/train.py --config configs/model/unet_2.yaml
 
 # 3. Run GUI after training is complete
-python run_gui.py
+python run_demo.py
 
 # In the GUI:
 # 4. Click "Load Single Layer Example"
