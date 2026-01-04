@@ -287,4 +287,4 @@ Key libraries used:
 
 ## AI Disclaimer
 
-Generative AI tools have been used in this project. Claude-4.5 has been used for ideation, debugging and the generation of documentation. Furthermore, it has been used to generate the demo GUI, as well this README file.
+Generative AI tools have been used in this project. Claude-4.5 has been used for ideation, code debugging and the generation of documentation. Furthermore, it has been used to generate the demo GUI, as well as this README file.
