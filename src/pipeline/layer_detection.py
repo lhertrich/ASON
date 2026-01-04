@@ -6,81 +6,31 @@ from collections import defaultdict
 from math import acos, degrees
 
 class LayerDetectionModule:
-    def __init__(self, image: np.ndarray, nuclei_data_dict: dict[str, np.ndarray], nuclei_mask: np.ndarray, tissue_mask: np.ndarray, area_th: float = 0.5) -> None:
+    def __init__(self, image: np.ndarray, nuclei_data_dict: dict[str, np.ndarray], tissue_mask: np.ndarray, area_th: float = 0.5) -> None:
+        # Input variables
         self.image = image
         self.nuclei_data_dict = nuclei_data_dict
-        self.nuclei_mask = nuclei_mask
         self.tissue_mask = tissue_mask
         self.area_th = area_th
-        self.filtered_data_dict = self._filter_data_dict(tissue_mask, nuclei_data_dict, area_th)
 
-    
-    def _filter_data_dict(self, mask: np.ndarray, data_dict: dict[str, any], area_th: float = 0.5) -> dict[str, np.ndarray]:
-        """Filter nuclei detections based on tissue mask and area threshold.
+        # Helper variables
+        self.neighbor_dict, _ = self._get_delaunay_neighbors(nuclei_data_dict["points"])
+        self.boundary_points = nuclei_data_dict["coord"]
 
-        Args:
-            mask: Binary tissue segmentation mask.
-            data_dict: Dictionary containing nuclei detection results with keys
-                'points', 'coord', and 'prob'.
-            area_th: Area threshold as a fraction of median area. Nuclei with area
-                below this threshold are filtered out. Defaults to 0.5.
-
-        Returns:
-            Filtered dictionary containing only nuclei that are within tissue regions
-            and meet the area threshold criteria.
-        """
-        points = data_dict["points"]
-        median_area = self._calculate_median_area(data_dict["coord"])
-        filtered_points = []
-        filtered_coords = []
-        filtered_probs = []
-
-        binary_mask = (mask > 0).astype(int)
-        for i, (point, coord) in enumerate(zip(points, data_dict["coord"])):
-            x, y = int(point[0]), int(point[1])
-            area = self._poly_area(np.array(coord[0]), np.array(coord[1]))
-            if binary_mask[x, y] == 1 and area > area_th * median_area:
-                filtered_points.append([point[0], point[1]])
-                filtered_coords.append(coord)
-                filtered_probs.append(data_dict["prob"][i])
-
-        filtered_data_dict = dict(data_dict)
-        filtered_data_dict["points"] = np.array(filtered_points)
-        filtered_data_dict["coord"] = np.array(filtered_coords)
-        filtered_data_dict["prob"] = np.array(filtered_probs)
+        # Build graph and filter
+        self.distance_threshold = self._get_median_distance(nuclei_data_dict["points"], self.neighbor_dict) * 1.5
+        self.graph = self.build_neighbor_graph(nuclei_data_dict["points"], self.neighbor_dict, self.boundary_points, self.distance_threshold)
         
-        return filtered_data_dict
-
-    def _poly_area(self, x: int, y: int) -> float:
-        """Calculate the area of a polygon using the shoelace formula.
-
-        Args:
-            x: Array of x-coordinates of the polygon vertices.
-            y: Array of y-coordinates of the polygon vertices.
-
-        Returns:
-            Area of the polygon as a float.
-        """
-        return 0.5*np.abs(np.dot(x,np.roll(y,1))-np.dot(y,np.roll(x,1)))
-
-    
-    def _calculate_median_area(self, coordinates: np.ndarray) -> float:
-        """Calculate the median area of all given nuclei.
-
-        Args:
-            coordinates: Array of nuclei coordinates where each nucleus is represented
-                as a tuple of (x_coords, y_coords).
-
-        Returns:
-            Median area across all polygons as a float.
-        """
-        areas = []
-        for coord in coordinates:
-            area = self._poly_area(np.array(coord[0]), np.array(coord[1]))
-            areas.append(area)
+        # Create filtered graph by copying edges that pass the filter
+        self.filtered_graph = self._create_filtered_graph(
+            self.graph,
+            alignment_threshold=0.6,
+            angle_threshold=45.0,
+            distance_threshold=None
+        )
         
-        median_area = np.median(np.array(areas))
-        return median_area
+        self.top_n_filtered_graph = self.filter_graph_top_n(self.filtered_graph, 2)
+        self.classifications = self.classify_nuclei(self.filtered_graph)
 
 
     def _get_delaunay_neighbors(self, points) -> tuple[dict[int, set[int]], np.ndarray]:
@@ -303,11 +253,9 @@ class LayerDetectionModule:
                 )
                 neighbor_scores.append((neighbor, similarity))
             
-            # Get top 2 neighbors
             neighbor_scores.sort(key=lambda x: x[1], reverse=True)
             top_two = neighbor_scores[:2]
             
-            # Calculate combined similarity score
             if len(top_two) == 2:
                 best_similarity = (top_two[0][1] + top_two[1][1]) / 2.0
             elif len(top_two) == 1:
@@ -319,7 +267,7 @@ class LayerDetectionModule:
 
         return G
 
-    def _filter_neighbor_graph(self, G: nx.Graph, n1: int, n2: int, alignment_threshold: float, angle_threshold: float, distance_threshold: float | None = None) -> bool:
+    def filter_neighbor_graph(self, G: nx.Graph, n1: int, n2: int, alignment_threshold: float, angle_threshold: float, distance_threshold: float | None = None) -> bool:
         """Determine if an edge between two nodes meets filtering criteria.
 
         Args:
@@ -345,9 +293,33 @@ class LayerDetectionModule:
         distance_ok = (distance_threshold is None) or (distance <= distance_threshold)
 
         return alignment_ok and angle_ok and distance_ok
-
     
-    def _filter_graph_top_n(self, G: nx.Graph, n: int = 2) -> nx.Graph:
+    def _create_filtered_graph(self, G: nx.Graph, alignment_threshold: float, angle_threshold: float, distance_threshold: float | None = None) -> nx.Graph:
+        """Create a filtered copy of the graph with only edges meeting the criteria.
+
+        Args:
+            G: NetworkX graph containing nuclei and their relationships.
+            alignment_threshold: Minimum alignment value for edge to pass filter.
+            angle_threshold: Maximum angle value (in degrees) for edge to pass filter.
+            distance_threshold: Maximum distance for edge to pass filter. If None,
+                distance is not checked. Defaults to None.
+
+        Returns:
+            New NetworkX graph containing only edges that pass the filter criteria.
+        """
+        G_filtered = nx.Graph()
+        
+        for node, data in G.nodes(data=True):
+            G_filtered.add_node(node, **data)
+        
+        for n1, n2, data in G.edges(data=True):
+            if self.filter_neighbor_graph(G, n1, n2, alignment_threshold, angle_threshold, distance_threshold):
+                G_filtered.add_edge(n1, n2, **data)
+        
+        return G_filtered
+
+
+    def filter_graph_top_n(self, G: nx.Graph, n: int = 2) -> nx.Graph:
         """Filter graph to keep only the top N most similar neighbors for each node.
 
         Args:
@@ -416,7 +388,7 @@ class LayerDetectionModule:
         return np.median(similarities)
 
     
-    def _classify_nuclei(
+    def classify_nuclei(
             self,
             filtered_graph: nx.Graph,
             k_neighbors: int = 5,

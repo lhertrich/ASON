@@ -1,8 +1,44 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import networkx as nx
+from sklearn.decomposition import PCA
 
-from src.pipeline.layer_detection import get_axis_for_nuclei
+
+def get_axis_for_nuclei(boundary_points: np.ndarray) -> np.ndarray:
+    """Calculate orientation axes for multiple nuclei.
+
+    Args:
+        boundary_points: Array of boundary coordinates for multiple nuclei.
+
+    Returns:
+        Array of orientation axis vectors, one for each nucleus.
+    """
+    def _get_nucleus_orientation(boundary_points):
+        """Determine the main orientation axis of a nucleus using PCA."""
+        boundary_points = np.array(boundary_points)
+        
+        if boundary_points.shape[0] == 2:
+            boundary_points = boundary_points.T
+
+        # Center the points
+        centroid = boundary_points.mean(axis=0)
+        centered = boundary_points - centroid
+        
+        # PCA to find main axis
+        pca = PCA(n_components=2)
+        pca.fit(centered)
+        
+        # First principal component is the main axis
+        main_axis = pca.components_[0]
+        
+        return main_axis
+    
+    all_axises = []
+    for boundary in boundary_points:
+        axis = _get_nucleus_orientation(boundary)
+        all_axises.append(axis)
+
+    return np.array(all_axises)
 
 
 def plot_image_with_points(image: np.ndarray, data_dict: dict[str,np.ndarray], ax=None) -> None:
@@ -133,15 +169,12 @@ def visualize_nodes_by_similarity(image: np.ndarray, filtered_graph: nx.Graph,
     similarities = np.array(similarities)
     positions = np.array(positions)
     
-    # Create blue-to-red colormap
     cmap = plt.cm.get_cmap('coolwarm')
-    
-    # Plot all nodes at once for better performance
+
     scatter = ax.scatter(positions[:, 1], positions[:, 0], 
                         s=node_size, c=similarities, 
                         cmap=cmap, alpha=alpha, zorder=5, vmin=0, vmax=1)
     
-    # Add colorbar
     cbar = plt.colorbar(scatter, ax=ax, fraction=0.03, pad=0.02)
     cbar.set_label('Best Similarity', rotation=270, labelpad=15)
     
@@ -182,11 +215,9 @@ def visualize_nuclei_axes(image: np.ndarray, points: np.ndarray, axes: np.ndarra
     ax.axis('off')
     
     for point, axis in zip(points, axes):
-        # Calculate line endpoints (extending in both directions)
         start_point = point - axis * line_length
         end_point = point + axis * line_length
         
-        # Draw line through the point
         ax.plot([start_point[1], end_point[1]], 
                [start_point[0], end_point[0]],
                color=line_color, linewidth=linewidth, alpha=alpha, zorder=4)
@@ -219,7 +250,6 @@ def visualize_graph_overlay_with_axes(image: np.ndarray, filtered_graph: nx.Grap
     """
     fig, ax = plt.subplots(figsize=(12, 12))
     
-    # Display image
     ax.imshow(image)
     ax.axis('off')
 
@@ -227,20 +257,17 @@ def visualize_graph_overlay_with_axes(image: np.ndarray, filtered_graph: nx.Grap
     boundary_points = filtered_data_dict["coord"]
     axes = get_axis_for_nuclei(boundary_points)
     
-    # Draw edges
     for (n1, n2) in filtered_graph.edges():
         pos1 = filtered_graph.nodes[n1]['pos']
         pos2 = filtered_graph.nodes[n2]['pos']
         ax.plot([pos1[1], pos2[1]], [pos1[0], pos2[0]], 
                 color=edge_color, linewidth=edge_width, alpha=alpha)
     
-    # Draw nodes
     for node in filtered_graph.nodes():
         pos = filtered_graph.nodes[node]['pos']
         ax.scatter(pos[1], pos[0], s=node_size, c=node_color, 
                   edgecolors='black', linewidths=1, alpha=alpha, zorder=5)
 
-    # Draw axes
     for point, axis in zip(points, axes):
         start_point = point - axis * 25
         end_point = point + axis * 25

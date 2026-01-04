@@ -13,7 +13,7 @@ training:
 checkpoint_path: checkpoints
 
 wandb:
-  use: True
+  use: False
   project: rp-tissue_segmentation
 
 seed: 42

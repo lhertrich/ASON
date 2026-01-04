@@ -72,8 +72,8 @@ class SegmentationModule:
         _, data_dict = self.nuclei_model.predict_instances(
             image_normed,
             axes="YXC",
-            prob_thresh=0.25,
-            nms_thresh=0.01,
+            prob_thresh=prob_thresh,
+            nms_thresh=nms_thresh,
             return_labels=True,
         )
         if cleaned:
