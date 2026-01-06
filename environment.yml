@@ -5,6 +5,7 @@ channels:
 dependencies:
   - python=3.12
   - pip
+  - tk
   - numpy
   - matplotlib
   - scipy
@@ -15,9 +16,12 @@ dependencies:
   - jupyterlab
   - networkx
   - tifffile
+  - hydra-core
+  - omegaconf
   - pytorch
   - torchvision
   - segmentation-models-pytorch
+  - tensorflow
   - tensorboard
   - wandb
   - pip:
@@ -30,3 +34,5 @@ dependencies:
       - shapely
       - alphashape
       - opencv-python-headless
+      - zarr<3.0.0
+      - numcodecs<0.14.0

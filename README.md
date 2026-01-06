@@ -52,12 +52,12 @@ cd ASON
 conda env create -f environment.yml
 ```
 
-This will create a new environment called `research_project` with all required dependencies.
+This will create a new environment called `ason` with all required dependencies.
 
 3. **Activate the environment:**
 
 ```bash
-conda activate research_project
+conda activate ason
 ```
 
 4. **Verify installation:**
@@ -123,8 +123,8 @@ ASON/
 Once you have trained a model, you can explore the pipeline through the interactive GUI:
 
 ```bash
-conda activate research_project
-python run_gui.py
+conda activate ason
+python run_demo.py
 ```
 
 ### GUI Features
@@ -159,7 +159,7 @@ The GUI provides a step-by-step interface for the analysis pipeline:
 
 ```bash
 # 1. Activate environment
-conda activate research_project
+conda activate ason
 
 # 2. Train a segmentation model first (see Tissue Segmentation section)
 python src/train.py --config configs/model/unet_2.yaml
@@ -222,7 +222,7 @@ data:
 #### 3. Train the Model
 
 ```bash
-conda activate research_project
+conda activate ason
 
 # Train with specific config
 python src/train.py --config configs/model/unet_2.yaml
@@ -258,7 +258,7 @@ The GUI and pipeline will automatically load the appropriate checkpoint from the
 ### Running Exploration Notebooks
 
 ```bash
-conda activate research_project
+conda activate ason
 jupyter notebook
 
 # Navigate to exploration/ directory
