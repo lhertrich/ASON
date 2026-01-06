@@ -18,8 +18,6 @@ dependencies:
   - tifffile
   - hydra-core
   - omegaconf
-  - pytorch
-  - torchvision
   - segmentation-models-pytorch
   - tensorflow
   - tensorboard
@@ -36,3 +34,7 @@ dependencies:
       - opencv-python-headless
       - zarr<3.0.0
       - numcodecs<0.14.0
+      - python-dotenv
+      - torchmetrics
+      - torch
+      - torchvision

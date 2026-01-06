@@ -20,7 +20,13 @@ class ModelLoader:
     
     def __init__(self, project_root: Path = project_root):
         self.project_root = project_root
-        self.device = torch.device("mps" if torch.mps.is_available() else "cpu")
+        # Device selection: prefer CUDA > MPS > CPU
+        if torch.cuda.is_available():
+            self.device = torch.device("cuda")
+        elif torch.mps.is_available():
+            self.device = torch.device("mps")
+        else:
+            self.device = torch.device("cpu")
         self.models = {}
         self.configs = {}
         

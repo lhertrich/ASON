@@ -18,7 +18,13 @@ class TissueSegmentationModel(nn.Module):
         preprocessor: Optional[functools.partial] = None,
     ):
         super().__init__()
-        self.device = torch.device("mps" if torch.mps.is_available() else "cpu")
+        # Device selection: prefer CUDA > MPS > CPU
+        if torch.cuda.is_available():
+            self.device = torch.device("cuda")
+        elif torch.mps.is_available():
+            self.device = torch.device("mps")
+        else:
+            self.device = torch.device("cpu")
         self.model = model.to(self.device)
         self.preprocessor = preprocessor
         self.cfg = cfg

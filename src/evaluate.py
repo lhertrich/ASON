@@ -168,8 +168,13 @@ def main(cfg: DictConfig):
     print(OmegaConf.to_yaml(cfg))
     print("="*60)
     
-    # Setup device
-    device = torch.device("mps" if torch.mps.is_available() else "cpu")
+    # Setup device: prefer CUDA > MPS > CPU
+    if torch.cuda.is_available():
+        device = torch.device("cuda")
+    elif torch.mps.is_available():
+        device = torch.device("mps")
+    else:
+        device = torch.device("cpu")
     print(f"\nUsing device: {device}")
     
     # Get model name and checkpoint path

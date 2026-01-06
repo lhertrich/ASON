@@ -94,6 +94,9 @@ ASON/
 │
 ├── gui_example_images/    # Example images for GUI demo
 │
+├── reference_image/       # Reference image for stain normalization
+│   └── E2+P4+DHT_1_M7_3L_0013.tif
+│
 ├── src/                   # Source code
 │   ├── pipeline/          # Main pipeline modules
 │   │   ├── segment.py     # Segmentation module
@@ -162,7 +165,7 @@ The GUI provides a step-by-step interface for the analysis pipeline:
 conda activate ason
 
 # 2. Train a segmentation model first (see Tissue Segmentation section)
-python src/train.py --config configs/model/unet_2.yaml
+python python src/train.py model=unet_2
 
 # 3. Run GUI after training is complete
 python run_demo.py
