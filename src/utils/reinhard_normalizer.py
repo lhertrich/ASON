@@ -14,10 +14,22 @@ if str(project_root) not in sys.path:
 
 class ReinhardNormalizer:
 
-    def __init__(self):
+    def __init__(self, reference_image_path=None):
         """Initializes the normalizer
+        
+        Args:
+            reference_image_path: Path to reference image. If None, uses the default reference image.
         """
-        self.reference_image = tifffile.imread(str(project_root) + "/data/images/E2+P4+DHT_1_M7_3L_0013.tif")
+        if reference_image_path is None:
+            reference_image_path = str(project_root) + "/reference_image/E2+P4+DHT_1_M7_3L_0013.tif"
+            
+            if not os.path.exists(reference_image_path):
+                raise FileNotFoundError(
+                    f"Reference image not found at: {reference_image_path}\n"
+                    "Please ensure the reference_image folder contains E2+P4+DHT_1_M7_3L_0013.tif"
+                )
+        
+        self.reference_image = tifffile.imread(reference_image_path)
         reinhard_norm = stainnorm.ReinhardNormalizer()
         reinhard_norm.fit(self.reference_image)
         self.norm = reinhard_norm
