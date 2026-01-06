@@ -165,7 +165,7 @@ The GUI provides a step-by-step interface for the analysis pipeline:
 conda activate ason
 
 # 2. Train a segmentation model first (see Tissue Segmentation section)
-python python src/train.py model=unet_2
+python src/train.py model=unet_2
 
 # 3. Run GUI after training is complete
 python run_demo.py
@@ -228,7 +228,7 @@ data:
 conda activate ason
 
 # Train with specific config
-python src/train.py --config configs/model/unet_2.yaml
+python src/train.py model=unet_2
 
 # Monitor training with Weights & Biases (optional)
 # Training logs will be saved to wandb/
